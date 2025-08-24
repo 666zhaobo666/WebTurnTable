@@ -69,7 +69,8 @@ http://<服务器IP>:8088/
 
 ## 其他
 - 如需自定义奖项，请编辑 `turntable_entries.json` 文件。
-- 如需更改端口或其他配置，请修改 `application.properties`。
+- 如需更改端口或其他配置，请修改 `application.properties`或者直接在Web页面使用管理员密码更改。
 
 ---
 如有问题欢迎反馈。
+
