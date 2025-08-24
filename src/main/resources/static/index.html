@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Web转盘</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        #wheelCanvas { width: 400px; height: 400px; display: block; margin: 0 auto; box-shadow: 0 8px 32px #0002; border-radius: 50%; background: radial-gradient(circle at 60% 40%, #fff 60%, #eee 100%); }
+        #pointer {
+            width: 0; height: 0;
+            border-left: 20px solid transparent;
+            border-right: 20px solid transparent;
+            border-bottom: 40px solid #dc3545;
+            margin: 0 auto 10px auto;
+            filter: drop-shadow(0 4px 8px #0005);
+            animation: pointer-bounce 1s infinite alternate cubic-bezier(.5,1.5,.5,1);
+        }
+        @keyframes pointer-bounce {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(6px); }
+        }
+        .entry-list { max-height: 200px; overflow-y: auto; }
+        .result-highlight { color: #fff; background: linear-gradient(90deg,#ff9800,#f44336); border-radius: 8px; padding: 8px 16px; font-size: 1.3em; box-shadow: 0 2px 8px #f4433622; }
+    </style>
+</head>
+<body class="bg-light">
+<div class="container py-4">
+    <h2 class="text-center mb-4">Web转盘</h2>
+    <canvas id="wheelCanvas" width="400" height="400"></canvas>
+    <div id="pointer"></div>
+    <div class="text-center my-3">
+        <button id="spinBtn" class="btn btn-success">开始抽奖</button>
+    </div>
+    <div class="alert alert-info text-center d-none" id="resultBox"></div>
+    <div class="row mt-4">
+        <!-- 配置弹窗入口按钮 -->
+    </div>
+    <button id="adminBtn" class="btn btn-secondary position-fixed" style="right:32px;bottom:32px;z-index:999;">配置</button>
+    <!-- 密码弹窗 -->
+    <div class="modal fade" id="adminModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">请输入管理密码</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <input type="password" class="form-control" id="modalPwd" placeholder="管理密码">
+            <div class="invalid-feedback" id="modalPwdTip">密码错误</div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-primary" id="modalPwdOk">确定</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- 条目配置弹窗 -->
+    <div class="modal fade" id="configModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">配置转盘条目</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row">
+              <div class="col-md-6">
+                <h6>当前条目</h6>
+                <ul class="list-group entry-list" id="entryListConfig"></ul>
+              </div>
+              <div class="col-md-6">
+                <h6>添加新条目</h6>
+                <form id="entryFormConfig">
+                  <div class="mb-2">
+                    <input type="text" class="form-control" id="entryTextConfig" placeholder="新条目内容" required>
+                  </div>
+                  <button type="submit" class="btn btn-primary w-100">添加条目</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+const apiBase = '/api/turntable';
+let entries = [];
+let spinning = false;
+let angle = 0, winnerIdx = -1, winnerAngle = 0;
+let spinStart = 0, spinDuration = 0, startAngle = 0, targetAngle = 0;
+
+function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+function randomInRange(a, b) {
+    return a + Math.random() * (b - a);
+}
+
+function fetchEntries(cb) {
+    fetch(apiBase + '/entries').then(r => r.json()).then(data => {
+        entries = data;
+        drawWheel();
+        if (cb) cb();
+    });
+}
+
+function drawWheel(highlight) {
+    const canvas = document.getElementById('wheelCanvas');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 400, 400);
+    const cx = 200, cy = 200, r = 180;
+    if (!entries || entries.length === 0) {
+        ctx.fillStyle = '#eee';
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillStyle = '#888';
+        ctx.font = '24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('暂无条目', cx, cy);
+        return;
+    }
+    const per = 2 * Math.PI / entries.length;
+    for (let i = 0; i < entries.length; i++) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, r, angle + i * per, angle + (i + 1) * per);
+        ctx.closePath();
+        let grad = ctx.createLinearGradient(cx, cy, cx + Math.cos(angle + (i + 0.5) * per) * r, cy + Math.sin(angle + (i + 0.5) * per) * r);
+        grad.addColorStop(0, i % 2 === 0 ? '#ffe082' : '#4dd0e1');
+        grad.addColorStop(1, i % 2 === 0 ? '#ff9800' : '#0097a7');
+        ctx.fillStyle = grad;
+        ctx.shadowColor = '#0005';
+        ctx.shadowBlur = 8;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+        ctx.save();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(angle + i * per) * r, cy + Math.sin(angle + i * per) * r);
+        ctx.stroke();
+        ctx.restore();
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(angle + (i + 0.5) * per);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = highlight && i === winnerIdx ? '#fff' : '#333';
+        ctx.font = highlight && i === winnerIdx ? 'bold 22px sans-serif' : '18px sans-serif';
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#0006';
+        ctx.strokeText(entries[i].text, r - 18, 8);
+        ctx.fillText(entries[i].text, r - 18, 8);
+        ctx.restore();
+    }
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#ff9800';
+    ctx.shadowColor = '#ff9800aa';
+    ctx.shadowBlur = 12;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+}
+
+function showResult() {
+    drawWheel(true);
+    if (winnerIdx >= 0 && entries[winnerIdx]) {
+        const box = document.getElementById('resultBox');
+        box.innerHTML = '<span class="result-highlight">抽中：' + entries[winnerIdx].text + '</span>';
+        box.classList.remove('d-none');
+    }
+}
+
+document.getElementById('spinBtn').onclick = function() {
+    if (spinning || !entries || entries.length === 0) return;
+    const perAngle = 2 * Math.PI / entries.length;
+    const randomFinalAngle = randomInRange(0, 2 * Math.PI);
+    let idx = Math.floor(((Math.PI / 2 - randomFinalAngle + 2 * Math.PI) % (2 * Math.PI)) / perAngle);
+    if (idx >= entries.length) idx = entries.length - 1;
+    winnerIdx = idx;
+    winnerAngle = randomFinalAngle;
+    startAngle = angle % (2 * Math.PI);
+    const minRounds = Math.floor(randomInRange(5, 10));
+    targetAngle = startAngle + minRounds * 2 * Math.PI + ((winnerAngle - startAngle) % (2 * Math.PI));
+    spinDuration = randomInRange(5000, 11000);
+    spinStart = performance.now();
+    spinning = true;
+    document.getElementById('resultBox').classList.add('d-none');
+    requestAnimationFrame(animateWheel);
+};
+
+function animateWheel(now) {
+    if (!spinning) return;
+    let t = (now - spinStart) / spinDuration;
+    if (t > 1) t = 1;
+    const eased = easeInOutCubic(t);
+    angle = startAngle + (targetAngle - startAngle) * eased;
+    drawWheel(t === 1);
+    if (t < 1) {
+        requestAnimationFrame(animateWheel);
+    } else {
+        spinning = false;
+        setTimeout(showResult, 300);
+    }
+}
+
+// 配置弹窗相关逻辑
+const adminBtn = document.getElementById('adminBtn');
+const adminModal = new bootstrap.Modal(document.getElementById('adminModal'));
+const configModal = new bootstrap.Modal(document.getElementById('configModal'));
+const modalPwd = document.getElementById('modalPwd');
+const modalPwdTip = document.getElementById('modalPwdTip');
+const modalPwdOk = document.getElementById('modalPwdOk');
+
+adminBtn.onclick = function() {
+    modalPwd.value = '';
+    modalPwdTip.style.display = 'none';
+    adminModal.show();
+};
+modalPwdOk.onclick = function() {
+    const pwd = modalPwd.value;
+    if (!pwd) return;
+    fetch(apiBase + '/entries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: '', password: pwd })
+    }).then(async r => {
+        if (r.ok || (await r.text()).includes('条目内容不能为空')) {
+            adminModal.hide();
+            window._adminPwd = pwd;
+            fetchEntries(renderEntriesConfig);
+            configModal.show();
+        } else {
+            modalPwdTip.style.display = 'block';
+        }
+    });
+};
+
+function renderEntriesConfig() {
+    const list = document.getElementById('entryListConfig');
+    list.innerHTML = '';
+    entries.forEach(e => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item d-flex justify-content-between align-items-center';
+        li.textContent = e.text;
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn btn-sm btn-danger';
+        delBtn.textContent = '删除';
+        delBtn.onclick = () => deleteEntryConfig(e.id);
+        li.appendChild(delBtn);
+        list.appendChild(li);
+    });
+}
+function addEntryConfig(text) {
+    fetch(apiBase + '/entries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, password: window._adminPwd })
+    }).then(async r => {
+        if (r.ok) {
+            fetchEntries(renderEntriesConfig);
+            document.getElementById('entryTextConfig').value = '';
+        } else {
+            alert(await r.text());
+        }
+    });
+}
+function deleteEntryConfig(id) {
+    fetch(apiBase + `/entries/${id}?password=${encodeURIComponent(window._adminPwd)}`, {
+        method: 'DELETE'
+    }).then(async r => {
+        if (r.ok) {
+            fetchEntries(renderEntriesConfig);
+        } else {
+            alert(await r.text());
+        }
+    });
+}
+document.getElementById('entryFormConfig').onsubmit = function(e) {
+    e.preventDefault();
+    const text = document.getElementById('entryTextConfig').value.trim();
+    if (!text) return;
+    addEntryConfig(text);
+};
+
+fetchEntries();
+});
+</script>
+</body>
+</html>
